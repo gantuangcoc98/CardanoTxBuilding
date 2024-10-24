@@ -3,9 +3,12 @@ using CardanoSharp.Wallet.CIPs.CIP2.ChangeCreationStrategies;
 using CardanoSharp.Wallet.CIPs.CIP2.Models;
 using CardanoSharp.Wallet.Enums;
 using CardanoSharp.Wallet.Extensions.Models;
+using CardanoSharp.Wallet.Extensions.Models.Transactions;
+using CardanoSharp.Wallet.Extensions.Models.Transactions.TransactionWitnesses;
 using CardanoSharp.Wallet.Models;
 using CardanoSharp.Wallet.Models.Addresses;
 using CardanoSharp.Wallet.Models.Transactions;
+using CardanoSharp.Wallet.Models.Transactions.TransactionWitness;
 using CardanoSharp.Wallet.Models.Transactions.TransactionWitness.PlutusScripts;
 using CardanoSharp.Wallet.TransactionBuilding;
 using CardanoSharp.Wallet.Utilities;
@@ -97,5 +100,43 @@ public static class CardanoTxBuildingUtils
                 )
             }
         );
+    }
+
+    public static TransactionWitnessSet DeserializeTxWitnessSet(string txWitnessSetCbor)
+    {
+        CBORObject txWitnessSetCborObj = CBORObject.DecodeFromBytes(Convert.FromHexString(txWitnessSetCbor));
+        return txWitnessSetCborObj.GetTransactionWitnessSet();
+    }
+
+    public static IEnumerable<Utxo> DeserializeUtxoCborHex(IEnumerable<string>? utxoCbors)
+    {
+        if (utxoCbors is null || !utxoCbors.Any()) return [];
+
+        return utxoCbors.Select(utxoCbor =>
+        {
+            CBORObject utxoCborObj = CBORObject.DecodeFromBytes(Convert.FromHexString(utxoCbor));
+            return utxoCborObj.GetUtxo();
+        }).ToList();
+    }
+
+    public static TransactionOutput DeserializeTxOutput(string txOutputCbor)
+    {
+        CBORObject txOutputCborObj = CBORObject.DecodeFromBytes(Convert.FromHexString(txOutputCbor));
+        return txOutputCborObj.GetTransactionOutput();
+    }
+
+    public static TransactionInput GetScriptReferenceInput(IConfiguration configuration)
+    {
+        string txOutputCbor = configuration["ValidatorScriptRefCbor"] ?? throw new Exception("validator reference script tx output cbor not configured");
+        string txHash = configuration["ValidatorScriptRefHash"] ?? throw new Exception("validator reference script tx hash not configured");
+        int txIndex = int.Parse(configuration["ValidatorScriptRefIndex"]!); 
+        TransactionOutput txOutput = DeserializeTxOutput(txOutputCbor);
+
+        return new()
+        {
+            TransactionId = Convert.FromHexString(txHash),
+            TransactionIndex = (uint)txIndex,
+            Output = txOutput
+        };
     }
 }

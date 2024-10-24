@@ -1,5 +1,8 @@
 using CardanoTxBuilding.API.Handlers;
+using CardanoTxBuilding.Data.Models;
+using CardanoTxBuilding.Data.Services;
 using Carter;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,7 +12,24 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddCarter();
+builder.Services.AddSingleton<TransactionService>();
 builder.Services.AddSingleton<TransactionHandler>();
+
+builder.Services.AddDbContextFactory<CardanoTxBuildingDbContext>(options =>
+{
+    options
+    .UseNpgsql(
+        builder.Configuration
+        .GetConnectionString("CardanoContext"),
+            x =>
+            {
+                x.MigrationsHistoryTable(
+                    "__EFMigrationsHistory",
+                    builder.Configuration.GetConnectionString("CardanoContextSchema")
+                );
+            }
+        );
+});
 
 var app = builder.Build();
 
