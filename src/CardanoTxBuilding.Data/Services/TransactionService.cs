@@ -1,10 +1,3 @@
-using CardanoSharp.Wallet.Extensions.Models.Transactions;
-using CardanoSharp.Wallet.Models;
-using CardanoSharp.Wallet.Models.Addresses;
-using CardanoSharp.Wallet.Models.Transactions;
-using CardanoSharp.Wallet.Models.Transactions.TransactionWitness;
-using CardanoSharp.Wallet.Models.Transactions.TransactionWitness.PlutusScripts;
-using CardanoSharp.Wallet.TransactionBuilding;
 using CardanoTxBuilding.Data.Models;
 using CardanoTxBuilding.Data.Models.Datum;
 using CardanoTxBuilding.Data.Models.Entity;
@@ -12,11 +5,17 @@ using CardanoTxBuilding.Data.Utils;
 using Chrysalis.Cbor;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using CSharpRedeemer = CardanoSharp.Wallet.Models.Transactions.TransactionWitness.PlutusScripts.Redeemer;
 using PeterO.Cbor2;
 using CardanoTxBuilding.Data.Extensions;
-using System.Net.Http.Headers;
+using CardanoSharp.Wallet.Models.Addresses;
+using CardanoSharp.Wallet.Models;
+using CardanoSharp.Wallet.TransactionBuilding;
+using CardanoSharp.Wallet.Models.Transactions;
+using CardanoSharp.Wallet.Extensions.Models.Transactions;
+using CardanoSharp.Wallet.Models.Transactions.TransactionWitness;
 using CardanoSharp.Wallet.Extensions.Models;
+using CardanoSharp.Wallet.Models.Transactions.TransactionWitness.PlutusScripts;
+using Chrysalis.Cardano.Models.Cbor;
 
 namespace CardanoTxBuilding.Data.Services;
 
@@ -134,27 +133,9 @@ public class TransactionService(
             }
         };
 
-        TransactionInput referenceScript = new()
-        {
-            TransactionId = Convert.FromHexString(configuration["ValidatorScriptRefHash"]!),
-            TransactionIndex = uint.Parse(configuration["ValidatorScriptRefIndex"]!),
-            Output = new()
-            {
-                Address = _validatorAddress.GetBytes(),
-                Value = new()
-                {
-                    Coin = ulong.Parse(configuration["ValidatorScriptLovelaceAmount"]!)
-                },
-                ScriptReference = new()
-                {
-                    PlutusV2Script = new()
-                    {
-                        script = Convert.FromHexString(configuration["ValidatorScriptRefCbor"]!)
-                    }
-                }
-            }
-        };
+        TransactionInput referenceScript = CardanoTxBuildingUtils.GetScriptReferenceInput(configuration);
 
+        // Build the transaction body given reference script, inputs, collateral, output, and required signer.
         ITransactionBodyBuilder txBodyBuilder = TransactionBodyBuilder.Create;
         txBodyBuilder.AddReferenceInput(referenceScript);
         txBodyBuilder.AddInput(lockedUtxo);
@@ -162,11 +143,18 @@ public class TransactionService(
         txBodyBuilder.AddOutput(changeAddress);
         txBodyBuilder.AddRequiredSigner(_ownerAddress.GetPublicKeyHash());
 
-        // Redeemer
+        // Get the plutus data for our generated redeemer
+        IPlutusData redeemerPlutusData = CBORObject.DecodeFromBytes(CborSerializer.Serialize(new Models.Datum.Redeemer(
+            new CborBytes(Convert.FromHexString("48656C6C6F21"))
+        ))).GetPlutusData();
+
+        // Build the redeemer given the redeemerPlutusData.
         RedeemerBuilder redeemerBuilder = RedeemerBuilder.Create;
         redeemerBuilder.SetTag(CardanoSharp.Wallet.Enums.RedeemerTag.Spend);
-        redeemerBuilder.SetPlutusData(CBORObject.DecodeFromBytes(CborSerializer.Serialize(new Models.Datum.Redeemer())).GetPlutusData());
+        redeemerBuilder.SetPlutusData(redeemerPlutusData);
+        redeemerBuilder.SetExUnits(new() { Mem = 0, Steps = 0 });
 
+        // Check input's output reference for redeemer index
         List<string> inputOutrefs = txBodyBuilder.Build().TransactionInputs.Select(i => Convert.ToHexString(i.TransactionId).ToLowerInvariant() + i.TransactionIndex).ToList();
         inputOutrefs.Sort();
         int redeemerIndex = inputOutrefs.IndexOf(lockedAda.Hash.ToLowerInvariant() + lockedAda.Index);
@@ -174,14 +162,15 @@ public class TransactionService(
 
         // Add redeemer to witness set
         ITransactionWitnessSetBuilder witnessSetBuilder = TransactionWitnessSetBuilder.Create;
-        witnessSetBuilder.AddRedeemer(redeemerBuilder);
+        witnessSetBuilder.AddRedeemer(redeemerBuilder.Build());
 
         // Build the entire transaction including the body and witness set
         ITransactionBuilder txBuilder = TransactionBuilder.Create;
         txBuilder.SetBody(txBodyBuilder);
         txBuilder.SetWitnesses(witnessSetBuilder);
 
-        Transaction tx = txBuilder.Build();
+        // Build the transaction
+        Transaction tx = txBuilder.BuildAndSetExUnits(CardanoTxBuildingUtils.GetNetworkType(configuration));
         uint fee = tx.CalculateAndSetFee(numberOfVKeyWitnessesToMock: 1);
         tx.TransactionBody.TransactionOutputs.Last().Value.Coin -= fee;
         string unsignedTxCbor = Convert.ToHexString(tx.Serialize());

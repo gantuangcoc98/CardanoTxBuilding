@@ -139,4 +139,31 @@ public static class CardanoTxBuildingUtils
             Output = txOutput
         };
     }
+
+    public static TransactionInput GetValidatorScriptInput(IConfiguration configuration)
+    {
+        string txHash = configuration["ValidatorRefScriptTxHash"]!;
+        uint txIndex = uint.Parse(configuration["ValidatorRefScriptTxIndex"]!);
+        string txOutputCbor = configuration["ValidatorScriptRefOutputCbor"]!;
+        TransactionOutput txOutput = ConvertTxOutputCbor(txOutputCbor);
+        TransactionInput resolvedTxInput = BuildTxInput(txHash, txIndex, txOutput);
+
+        return resolvedTxInput;
+    }
+
+    public static TransactionOutput ConvertTxOutputCbor(string txOutputCbor)
+    {
+        CBORObject txOutputCborObj = CBORObject.DecodeFromBytes(Convert.FromHexString(txOutputCbor));
+        return txOutputCborObj.GetTransactionOutput();
+    }
+    
+    public static TransactionInput BuildTxInput(string txHash, uint txIndex, TransactionOutput output)
+    {
+        return new TransactionInput
+        {
+            TransactionId = Convert.FromHexString(txHash),
+            TransactionIndex = txIndex,
+            Output = output
+        };
+    }
 }
